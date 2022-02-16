@@ -1,0 +1,110 @@
+---
+- name: install java, net-tools and acl
+  hosts: webserver
+  become: True
+  tasks:
+    - name: Update apt repo and cache
+      apt: 
+        update_cache=yes force_apt_get=yes cache_valid_time=3600
+    - name: install acl
+      apt:
+        name: acl
+        state: present
+    - name: install java 8
+      apt:
+        name: openjdk-8-jre-headless
+    - name: install net-tools
+      apt:
+        name: net-tools
+
+- name: download and unpack nexus installer
+  hosts: webserver
+  become: True
+  tasks:
+    - name: check nexus folder stats
+      stat:
+        path: /opt/nexus
+      register: stat_result
+    # - debug: msg={{stat_result.stat.exists}}
+    - name: download nexus
+      get_url:
+        url: https://download.sonatype.com/nexus/3/latest-unix.tar.gz
+        dest: /opt/
+      register: download_result
+    # - debug: msg={{download_result}}
+    - name: untar nexus installer
+      unarchive:
+        src: "{{download_result.dest}}"
+        dest: /opt/
+        remote_src: True
+      when: not stat_result.stat.exists
+    - name: find nexus folder
+      find:
+        paths: /opt
+        patterns: "nexus-*"
+        file_type: directory
+      register: find_result
+    # - debug: msg={{find_result}}
+    - name: rename nexus folder
+      shell: mv "{{find_result.files[0].path}}" /opt/nexus
+      when: not stat_result.stat.exists
+
+- name: create nexus user to own nexus folder
+  hosts: webserver
+  become: yes
+  tasks:
+    - name: ensure nexus group exists
+      group: 
+        name: nexus
+        state: present
+    - name: create nexus user
+      user:
+        name: nexus
+        group: nexus
+    - name: make nexus user owner of nexus folder
+      file:
+        path: /opt/nexus
+        state: directory
+        recurse: yes
+        owner: nexus
+        group: nexus
+    - name: make nexus user owner of sonatype-work folder
+      file:
+        path: /opt/sonatype-work
+        state: directory
+        recurse: yes
+        owner: nexus
+        group: nexus
+
+- name: start nexus with nexus user
+  hosts: webserver
+  become: True
+  become_user: nexus
+  tasks:
+    # - name: set run_as_user_nexus        # using blockinfile module
+    #   blockinfile:
+    #     path: /opt/nexus/bin/nexus.rc
+    #     block: |         # '|' => represents multi-line string
+    #       run_as_user="nexus"
+    - name: set run_as_user_nexus          # using lineinfile module
+      lineinfile:
+        path: /opt/nexus/bin/nexus.rc
+        regexp: '^#run_as_user=""'       # replace this line with run_as_user="nexus"
+        line: run_as_user="nexus"
+    - name: start nexus
+      command: /opt/nexus/bin/nexus start
+
+- name: verify nexus running 
+  hosts: webserver
+  tasks:
+    - name: check with ps
+      shell: ps aux | grep -i nexus
+      register: app_status          
+    - debug: msg={{app_status.stdout_lines}} 
+    - name: Pause for 1 minute      # pause for 1 minute before running netstat to make sure that the java port appears.
+      pause:
+        minutes: 1  
+    - name: check with netstat
+      shell: netstat -plnt
+      register: app_status
+    - debug: msg={{app_status.stdout_lines}}

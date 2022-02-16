@@ -1,0 +1,58 @@
+---
+# play 1
+- name: install acl, node and npm
+  hosts: webserver
+  become: True    # by default root
+  tasks:
+    - name: install acl
+      apt:
+        name: acl
+        state: present
+    - name: Update apt repo and cache
+      apt: 
+        update_cache=yes force_apt_get=yes cache_valid_time=3600
+    - name: install nodejs and npm
+      apt:
+        pkg:
+          - npm
+          - nodejs
+# -----------------------------------------------------------------------
+# play 2 
+- name: create a new linux user for node app
+  hosts: webserver
+  become: True
+  vars_files:
+    - project-vars
+  tasks:
+    - name: create a new linux user
+      user:
+        name: "{{linux_name}}"
+        comment: node user
+        group: admin
+# -------------------------------------------------------
+# play 3
+- name: deploy nodejs app
+  hosts: webserver
+  become: True  
+  become_user: "{{linux_name}}"
+  vars_files:
+    - project-vars
+  tasks:
+    - name: unpack the nodejs file
+      unarchive:
+        src: "{{location}}/nodejs-app-{{version}}.tgz"
+        dest: "{{user_home_dir}}"
+    - name: install dependencies
+      npm:
+        path: "{{user_home_dir}}/package"
+    - name: start the application
+      command: 
+        chdir: "{{user_home_dir}}/package/app"
+        cmd: node server
+      async: 1000     # run the app in the background
+      poll: 0
+    - name: ensure app is running
+      shell: ps aux | grep -i node   # a command to be executed on the servers.
+      register: app_status           # a variable to save the result of the shell command in.
+    - debug: msg={{app_status.stdout_lines}}      # to view the result.
+# -------------------------------------------------------------------------------------------------
